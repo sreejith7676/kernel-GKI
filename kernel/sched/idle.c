@@ -35,7 +35,6 @@ void cpu_idle_poll_ctrl(bool enable)
 		WARN_ON_ONCE(cpu_idle_force_poll < 0);
 	}
 }
-EXPORT_SYMBOL_GPL(cpu_idle_poll_ctrl);
 
 #ifdef CONFIG_GENERIC_IDLE_POLL_SETUP
 static int __init cpu_idle_poll_setup(char *__unused)
@@ -264,6 +263,12 @@ exit_idle:
 static void do_idle(void)
 {
 	int cpu = smp_processor_id();
+
+	/*
+	 * Check if we need to update blocked load
+	 */
+	nohz_run_idle_balance(cpu);
+
 	/*
 	 * If the arch has a polling bit, we maintain an invariant:
 	 *

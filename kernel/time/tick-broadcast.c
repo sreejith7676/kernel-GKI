@@ -14,40 +14,10 @@
 #include <linux/percpu.h>
 #include <linux/profile.h>
 #include <linux/sched.h>
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-#include <linux/sched/clock.h>
-#endif
 #include <linux/smp.h>
 #include <linux/module.h>
 
 #include "tick-internal.h"
-
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-#define reset_bc_dump_buf(buffer) ((buffer).p_idx = (buffer).buf)
-#define get_bc_dump_buf(buffer)   ((buffer).buf)
-#define bc_dump_buf_append(buffer, fmt, args...)           \
-	((buffer).p_idx += snprintf((buffer).p_idx,           \
-					BC_LOG_BUF_LEN - strlen((buffer).buf), \
-					fmt, ##args))
-
-static uint64_t tick_broadcast_enter_prev;
-static uint64_t tick_broadcast_enter_count[NR_CPUS];
-static uint64_t tick_broadcast_fail_count[NR_CPUS];
-static uint64_t tick_broadcast_success_count[NR_CPUS];
-static uint64_t tick_broadcast_interrupt_count[NR_CPUS];
-static uint64_t _tick_broadcast_enter_count[NR_CPUS];
-static uint64_t _tick_broadcast_fail_count[NR_CPUS];
-static uint64_t _tick_broadcast_success_count[NR_CPUS];
-static uint64_t _tick_broadcast_interrupt_count[NR_CPUS];
-static struct cpumask _tb_dbg_oneshot_mask;
-static struct cpumask _tb_dbg_pending_mask;
-static struct cpumask _tb_dbg_force_mask;
-
-struct tick_broadcast_history_struct tick_broadcast_history[NR_CPUS];
-EXPORT_SYMBOL_GPL(tick_broadcast_history);
-struct tick_broadcast_dump_buf bc_dump_buf;
-EXPORT_SYMBOL_GPL(bc_dump_buf);
-#endif
 
 /*
  * Broadcast support for broken x86 hardware, where the local apic
@@ -645,26 +615,6 @@ struct cpumask *tick_get_broadcast_oneshot_mask(void)
 	return tick_broadcast_oneshot_mask;
 }
 
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-struct cpumask *bc_tick_get_broadcast_oneshot_mask(void)
-{
-	return tick_broadcast_oneshot_mask;
-}
-EXPORT_SYMBOL_GPL(bc_tick_get_broadcast_oneshot_mask);
-
-struct cpumask *bc_tick_get_broadcast_pending_mask(void)
-{
-	return tick_broadcast_pending_mask;
-}
-EXPORT_SYMBOL_GPL(bc_tick_get_broadcast_pending_mask);
-
-struct cpumask *bc_tick_get_broadcast_force_mask(void)
-{
-	return tick_broadcast_force_mask;
-}
-EXPORT_SYMBOL_GPL(bc_tick_get_broadcast_force_mask);
-#endif
-
 /*
  * Called before going idle with interrupts disabled. Checks whether a
  * broadcast event from the other core is about to happen. We detected
@@ -738,13 +688,8 @@ static void tick_handle_oneshot_broadcast(struct clock_event_device *dev)
 	ktime_t now, next_event;
 	int cpu, next_cpu = 0;
 	bool bc_local;
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	tick_broadcast_history[0].handle_time = sched_clock();
-#endif
+
 	raw_spin_lock(&tick_broadcast_lock);
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	tick_broadcast_interrupt_count[smp_processor_id()]++;
-#endif
 	dev->next_event = KTIME_MAX;
 	next_event = KTIME_MAX;
 	cpumask_clear(tmpmask);
@@ -806,16 +751,8 @@ static void tick_handle_oneshot_broadcast(struct clock_event_device *dev)
 	 * - There are pending events on sleeping CPUs which were not
 	 * in the event mask
 	 */
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	if (next_event != KTIME_MAX) {
-		tick_broadcast_set_event(dev, next_cpu, next_event);
-		tick_broadcast_history[0].affin_handle_cpu = next_cpu;
-		tick_broadcast_history[1].handle_time = sched_clock();
-	}
-#else
 	if (next_event != KTIME_MAX)
 		tick_broadcast_set_event(dev, next_cpu, next_event);
-#endif
 
 	raw_spin_unlock(&tick_broadcast_lock);
 
@@ -858,11 +795,6 @@ static int ___tick_broadcast_oneshot_control(enum tick_broadcast_state state,
 	struct clock_event_device *bc, *dev = td->evtdev;
 	int ret = 0;
 	ktime_t now;
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	uint64_t enter_offset = 0;
-	int need_dump = 0, set_event = 0;
-	unsigned long long now_sched_clock = sched_clock();
-#endif
 
 	raw_spin_lock(&tick_broadcast_lock);
 	bc = tick_broadcast_device.evtdev;
@@ -909,14 +841,7 @@ static int ___tick_broadcast_oneshot_control(enum tick_broadcast_state state,
 			if (cpumask_test_cpu(cpu, tick_broadcast_force_mask)) {
 				ret = -EBUSY;
 			} else if (dev->next_event < bc->next_event) {
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-				set_event = true;
 				tick_broadcast_set_event(bc, cpu, dev->next_event);
-				tick_broadcast_history[0].affin_enter_cpu = cpu;
-				tick_broadcast_history[2].handle_time = sched_clock();
-#else
-				tick_broadcast_set_event(bc, cpu, dev->next_event);
-#endif
 				/*
 				 * In case of hrtimer broadcasts the
 				 * programming might have moved the
@@ -997,144 +922,7 @@ static int ___tick_broadcast_oneshot_control(enum tick_broadcast_state state,
 		}
 	}
 out:
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	if (state == TICK_BROADCAST_ENTER) {
-		tick_broadcast_history[cpu].time_enter = now_sched_clock;
-		tick_broadcast_history[cpu].ret_enter = ret;
-
-		tick_broadcast_enter_count[cpu]++;
-		if (set_event)
-			tick_broadcast_success_count[cpu]++;
-		if (ret < 0)
-			tick_broadcast_fail_count[cpu]++;
-	} else {
-		tick_broadcast_history[cpu].time_exit = now_sched_clock;
-
-		now_sched_clock = sched_clock();
-		do_div(now_sched_clock, 1000000ULL);
-		enter_offset = now_sched_clock -
-			tick_broadcast_enter_prev;
-		if (enter_offset > 5000) {
-			int i = 0;
-
-			tick_broadcast_enter_prev =
-				now_sched_clock;
-			need_dump = true;
-
-			for (i = 0; i < NR_CPUS; i++) {
-				/* to avoid unexpected overrun */
-				if (i >= num_possible_cpus())
-					break;
-				_tick_broadcast_enter_count[i] =
-					tick_broadcast_enter_count[i];
-				_tick_broadcast_fail_count[i] =
-					tick_broadcast_fail_count[i];
-				_tick_broadcast_success_count[i] =
-					tick_broadcast_success_count[i];
-				_tick_broadcast_interrupt_count[i] =
-					tick_broadcast_interrupt_count[i];
-
-				tick_broadcast_enter_count[i] = 0;
-				tick_broadcast_fail_count[i] = 0;
-				tick_broadcast_success_count[i] = 0;
-				tick_broadcast_interrupt_count[i] = 0;
-
-				cpumask_copy(&_tb_dbg_oneshot_mask,
-					tick_broadcast_oneshot_mask);
-				cpumask_copy(&_tb_dbg_pending_mask,
-					tick_broadcast_pending_mask);
-				cpumask_copy(&_tb_dbg_force_mask,
-					tick_broadcast_force_mask);
-			}
-		}
-	}
-#endif
 	raw_spin_unlock(&tick_broadcast_lock);
-#if IS_ENABLED(CONFIG_MTK_TICK_BROADCAST_DEBUG)
-	if (need_dump) {
-		int i = 0;
-
-		reset_bc_dump_buf(bc_dump_buf);
-
-		bc_dump_buf_append(bc_dump_buf,
-			"tb[%lld] ", sched_clock());
-
-		bc_dump_buf_append(bc_dump_buf,
-			"enter counter cpu: ");
-
-		for (i = 0; i < NR_CPUS; i++) {
-			/* to avoid unexpected overrun */
-			if (i >= num_possible_cpus())
-				break;
-			bc_dump_buf_append(bc_dump_buf, "%lld, ",
-				_tick_broadcast_enter_count[i]);
-		}
-
-		bc_dump_buf_append(bc_dump_buf,
-			"success counter cpu: ");
-
-		for (i = 0; i < NR_CPUS; i++) {
-			/* to avoid unexpected overrun */
-			if (i >= num_possible_cpus())
-				break;
-			bc_dump_buf_append(bc_dump_buf, "%lld, ",
-				_tick_broadcast_success_count[i]);
-		}
-
-		bc_dump_buf_append(bc_dump_buf,
-			"fail counter cpu: ");
-
-		for (i = 0; i < NR_CPUS; i++) {
-			/* to avoid unexpected overrun */
-			if (i >= num_possible_cpus())
-				break;
-			bc_dump_buf_append(bc_dump_buf, "%lld, ",
-				_tick_broadcast_fail_count[i]);
-		}
-
-		bc_dump_buf_append(bc_dump_buf,
-			"interrupt counter cpu: ");
-
-		for (i = 0; i < NR_CPUS; i++) {
-			/* to avoid unexpected overrun */
-			if (i >= num_possible_cpus())
-				break;
-			bc_dump_buf_append(bc_dump_buf, "%lld, ",
-				_tick_broadcast_interrupt_count[i]);
-		}
-
-		bc_dump_buf_append(bc_dump_buf,
-			"o: %*pbl",
-			cpumask_pr_args(&_tb_dbg_oneshot_mask));
-		bc_dump_buf_append(bc_dump_buf,
-			", p: %*pbl",
-			cpumask_pr_args(&_tb_dbg_pending_mask));
-		bc_dump_buf_append(bc_dump_buf,
-			", f: %*pbl",
-			cpumask_pr_args(&_tb_dbg_force_mask));
-		bc_dump_buf_append(bc_dump_buf,
-			", t: ");
-		for (i = 0; i < NR_CPUS; i++) {
-			struct tick_device *td;
-
-			/* to avoid unexpected overrun */
-			if (i >= num_possible_cpus())
-				break;
-
-			td = &per_cpu(tick_cpu_device, i);
-			if (!td || !td->evtdev) {
-				if (!td)
-					bc_dump_buf_append(bc_dump_buf,
-							     " N,");
-				else if (!td->evtdev)
-					bc_dump_buf_append(bc_dump_buf,
-							     " N:%p,", td);
-			} else
-				bc_dump_buf_append(bc_dump_buf, " %lld,",
-					td->evtdev->next_event);
-		}
-	}
-#endif
 	return ret;
 }
 
@@ -1283,6 +1071,30 @@ void hotplug_cpu__broadcast_tick_pull(int deadcpu)
 	bc = tick_broadcast_device.evtdev;
 
 	if (bc && broadcast_needs_cpu(bc, deadcpu)) {
+		/*
+		 * If the broadcast force bit of the current CPU is set,
+		 * then the current CPU has not yet reprogrammed the local
+		 * timer device to avoid a ping-pong race. See
+		 * ___tick_broadcast_oneshot_control().
+		 *
+		 * If the broadcast device is hrtimer based then
+		 * programming the broadcast event below does not have any
+		 * effect because the local clockevent device is not
+		 * running and not programmed because the broadcast event
+		 * is not earlier than the pending event of the local clock
+		 * event device. As a consequence all CPUs waiting for a
+		 * broadcast event are stuck forever.
+		 *
+		 * Detect this condition and reprogram the cpu local timer
+		 * device to avoid the starvation.
+		 */
+		if (tick_check_broadcast_expired()) {
+			struct tick_device *td = this_cpu_ptr(&tick_cpu_device);
+
+			cpumask_clear_cpu(smp_processor_id(), tick_broadcast_force_mask);
+			tick_program_event(td->evtdev->next_event, 1);
+		}
+
 		/* This moves the broadcast assignment to this CPU: */
 		clockevents_program_event(bc, bc->next_event, 1);
 	}

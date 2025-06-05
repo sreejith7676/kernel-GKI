@@ -1,6 +1,0 @@
-config HQ_CAMERA_LDO
-	tristate "Camera ldo Driver Support"
-	help
-	  CAMERA LDO driver
-
-
