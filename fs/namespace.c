@@ -415,7 +415,7 @@ int mnt_want_write_file(struct file *file)
 		sb_end_write(file_inode(file)->i_sb);
 	return ret;
 }
-EXPORT_SYMBOL_NS_GPL(mnt_want_write_file, ANDROID_GKI_VFS_EXPORT_ONLY);
+EXPORT_SYMBOL_GPL(mnt_want_write_file);
 
 /**
  * __mnt_drop_write - give up write access to a mount
@@ -457,7 +457,7 @@ void mnt_drop_write_file(struct file *file)
 	__mnt_drop_write_file(file);
 	sb_end_write(file_inode(file)->i_sb);
 }
-EXPORT_SYMBOL_NS(mnt_drop_write_file, ANDROID_GKI_VFS_EXPORT_ONLY);
+EXPORT_SYMBOL(mnt_drop_write_file);
 
 static int mnt_make_readonly(struct mount *mnt)
 {
@@ -569,15 +569,11 @@ int __legitimize_mnt(struct vfsmount *bastard, unsigned seq)
 		return 0;
 	mnt = real_mount(bastard);
 	mnt_add_count(mnt, 1);
-	smp_mb();			// see mntput_no_expire()
+	smp_mb();		// see mntput_no_expire() and do_umount()
 	if (likely(!read_seqretry(&mount_lock, seq)))
 		return 0;
-	if (bastard->mnt_flags & MNT_SYNC_UMOUNT) {
-		mnt_add_count(mnt, -1);
-		return 1;
-	}
 	lock_mount_hash();
-	if (unlikely(bastard->mnt_flags & MNT_DOOMED)) {
+	if (unlikely(bastard->mnt_flags & (MNT_SYNC_UMOUNT | MNT_DOOMED))) {
 		mnt_add_count(mnt, -1);
 		unlock_mount_hash();
 		return 1;
@@ -1638,6 +1634,7 @@ static int do_umount(struct mount *mnt, int flags)
 			umount_tree(mnt, UMOUNT_PROPAGATE);
 		retval = 0;
 	} else {
+		smp_mb(); // paired with __legitimize_mnt()
 		shrink_submounts(mnt);
 		retval = -EBUSY;
 		if (!propagate_mount_busy(mnt, 2)) {

@@ -18,15 +18,27 @@ set -f
 LC_ALL=C
 export LC_ALL
 
-# Static version (hardcoded)
-VERSION="1"
+if [ -z "$KBUILD_BUILD_VERSION" ]; then
+	VERSION=$(cat .version 2>/dev/null || echo 1)
+else
+	VERSION=$KBUILD_BUILD_VERSION
+fi
 
-# Dynamic timestamp (based on your PC's current time)
-TIMESTAMP=$(date)
-
-# Hardcoded user and host
-LINUX_COMPILE_BY="sreejith"
-LINUX_COMPILE_HOST="arch"
+if [ -z "$KBUILD_BUILD_TIMESTAMP" ]; then
+	TIMESTAMP=`date`
+else
+	TIMESTAMP=$KBUILD_BUILD_TIMESTAMP
+fi
+if test -z "$KBUILD_BUILD_USER"; then
+	LINUX_COMPILE_BY=$(whoami | sed 's/\\/\\\\/')
+else
+	LINUX_COMPILE_BY=$KBUILD_BUILD_USER
+fi
+if test -z "$KBUILD_BUILD_HOST"; then
+	LINUX_COMPILE_HOST=`uname -n`
+else
+	LINUX_COMPILE_HOST=$KBUILD_BUILD_HOST
+fi
 
 UTS_VERSION="#$VERSION"
 CONFIG_FLAGS=""
@@ -39,24 +51,42 @@ UTS_LEN=64
 UTS_VERSION="$(echo $UTS_VERSION $CONFIG_FLAGS $TIMESTAMP | cut -b -$UTS_LEN)"
 
 # Generate a temporary compile.h
-{
-  echo "/* This file is auto generated, version $VERSION */"
+
+{ echo /\* This file is auto generated, version $VERSION \*/
   if [ -n "$CONFIG_FLAGS" ] ; then echo "/* $CONFIG_FLAGS */"; fi
 
-  echo "#define UTS_MACHINE \"$ARCH\""
-  echo "#define UTS_VERSION \"$UTS_VERSION\""
-  printf '#define LINUX_COMPILE_BY "%s"\n' "$LINUX_COMPILE_BY"
-  echo "#define LINUX_COMPILE_HOST \"$LINUX_COMPILE_HOST\""
+  echo \#define UTS_MACHINE \"$ARCH\"
 
-  LD_VERSION=$($LD -v | head -n1 | sed 's/(compatible with [^)]*)//' | sed 's/[[:space:]]*$//')
+  echo \#define UTS_VERSION \"$UTS_VERSION\"
+
+  printf '#define LINUX_COMPILE_BY "%s"\n' "$LINUX_COMPILE_BY"
+  echo \#define LINUX_COMPILE_HOST \"$LINUX_COMPILE_HOST\"
+
+  LD_VERSION=$($LD -v | head -n1 | sed 's/(compatible with [^)]*)//' \
+		      | sed 's/[[:space:]]*$//')
   printf '#define LINUX_COMPILER "%s"\n' "$CC_VERSION, $LD_VERSION"
 } > .tmpcompile
 
-# Only replace compile.h if changed
-IGNORE_PATTERN="UTS_VERSION"
+# Only replace the real compile.h if the new one is different,
+# in order to preserve the timestamp and avoid unnecessary
+# recompilations.
+# We don't consider the file changed if only the date/time changed,
+# unless KBUILD_BUILD_TIMESTAMP was explicitly set (e.g. for
+# reproducible builds with that value referring to a commit timestamp).
+# A kernel config change will increase the generation number, thus
+# causing compile.h to be updated (including date/time) due to the
+# changed comment in the
+# first line.
+
+if [ -z "$KBUILD_BUILD_TIMESTAMP" ]; then
+   IGNORE_PATTERN="UTS_VERSION"
+else
+   IGNORE_PATTERN="NOT_A_PATTERN_TO_BE_MATCHED"
+fi
+
 if [ -r $TARGET ] && \
-      grep -v "$IGNORE_PATTERN" $TARGET > .tmpver.1 && \
-      grep -v "$IGNORE_PATTERN" .tmpcompile > .tmpver.2 && \
+      grep -v $IGNORE_PATTERN $TARGET > .tmpver.1 && \
+      grep -v $IGNORE_PATTERN .tmpcompile > .tmpver.2 && \
       cmp -s .tmpver.1 .tmpver.2; then
    rm -f .tmpcompile
 else
@@ -64,4 +94,3 @@ else
    mv -f .tmpcompile $TARGET
 fi
 rm -f .tmpver.1 .tmpver.2
-

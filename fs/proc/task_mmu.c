@@ -9,7 +9,6 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/pagemap.h>
-#include <linux/pgsize_migration.h>
 #include <linux/mempolicy.h>
 #include <linux/rmap.h>
 #include <linux/swap.h>
@@ -123,56 +122,6 @@ static void release_task_mempolicy(struct proc_maps_private *priv)
 {
 }
 #endif
-
-static void seq_print_vma_name(struct seq_file *m, struct vm_area_struct *vma)
-{
-	const char __user *name = vma_get_anon_name(vma);
-	struct mm_struct *mm = vma->vm_mm;
-
-	unsigned long page_start_vaddr;
-	unsigned long page_offset;
-	unsigned long num_pages;
-	unsigned long max_len = NAME_MAX;
-	int i;
-
-	page_start_vaddr = (unsigned long)name & PAGE_MASK;
-	page_offset = (unsigned long)name - page_start_vaddr;
-	num_pages = DIV_ROUND_UP(page_offset + max_len, PAGE_SIZE);
-
-	seq_puts(m, "[anon:");
-
-	for (i = 0; i < num_pages; i++) {
-		int len;
-		int write_len;
-		const char *kaddr;
-		long pages_pinned;
-		struct page *page;
-
-		pages_pinned = get_user_pages_remote(mm, page_start_vaddr, 1, 0,
-						     &page, NULL, NULL);
-		if (pages_pinned < 1) {
-			seq_puts(m, "<fault>]");
-			return;
-		}
-
-		kaddr = (const char *)kmap(page);
-		len = min(max_len, PAGE_SIZE - page_offset);
-		write_len = strnlen(kaddr + page_offset, len);
-		seq_write(m, kaddr + page_offset, write_len);
-		kunmap(page);
-		put_user_page(page);
-
-		/* if strnlen hit a null terminator then we're done */
-		if (write_len != len)
-			break;
-
-		max_len -= len;
-		page_offset = 0;
-		page_start_vaddr += PAGE_SIZE;
-	}
-
-	seq_putc(m, ']');
-}
 
 static void *m_start(struct seq_file *m, loff_t *ppos)
 {
@@ -370,15 +319,8 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 			goto done;
 		}
 
-		if (is_stack(vma)) {
+		if (is_stack(vma))
 			name = "[stack]";
-			goto done;
-		}
-
-		if (vma_get_anon_name(vma)) {
-			seq_pad(m, ' ');
-			seq_print_vma_name(m, vma);
-		}
 	}
 
 done:
@@ -391,14 +333,7 @@ done:
 
 static int show_map(struct seq_file *m, void *v)
 {
-	struct vm_area_struct *pad_vma = get_pad_vma(v);
-	struct vm_area_struct *vma = get_data_vma(v);
-
-	if (vma_pages(vma))
-		show_map_vma(m, vma);
-
-	show_map_pad_vma(vma, pad_vma, m, show_map_vma, false);
-
+	show_map_vma(m, v);
 	return 0;
 }
 
@@ -743,9 +678,6 @@ static void show_smap_vma_flags(struct seq_file *m, struct vm_area_struct *vma)
 		[ilog2(VM_PKEY_BIT4)]	= "",
 #endif
 #endif /* CONFIG_ARCH_HAS_PKEYS */
-#ifdef CONFIG_HAVE_ARCH_USERFAULTFD_MINOR
-		[ilog2(VM_UFFD_MINOR)]	= "ui",
-#endif /* CONFIG_HAVE_ARCH_USERFAULTFD_MINOR */
 	};
 	size_t i;
 
@@ -895,23 +827,14 @@ static void __show_smap(struct seq_file *m, const struct mem_size_stats *mss,
 
 static int show_smap(struct seq_file *m, void *v)
 {
-	struct vm_area_struct *pad_vma = get_pad_vma(v);
-	struct vm_area_struct *vma = get_data_vma(v);
+	struct vm_area_struct *vma = v;
 	struct mem_size_stats mss;
 
 	memset(&mss, 0, sizeof(mss));
 
-	if (!vma_pages(vma))
-		goto show_pad;
-
 	smap_gather_stats(vma, &mss, 0);
 
 	show_map_vma(m, vma);
-	if (vma_get_anon_name(vma)) {
-		seq_puts(m, "Name:           ");
-		seq_print_vma_name(m, vma);
-		seq_putc(m, '\n');
-	}
 
 	SEQ_PUT_DEC("Size:           ", vma->vm_end - vma->vm_start);
 	SEQ_PUT_DEC(" kB\nKernelPageSize: ", vma_kernel_pagesize(vma));
@@ -926,9 +849,6 @@ static int show_smap(struct seq_file *m, void *v)
 	if (arch_pkeys_enabled())
 		seq_printf(m, "ProtectionKey:  %8u\n", vma_pkey(vma));
 	show_smap_vma_flags(m, vma);
-
-show_pad:
-	show_map_pad_vma(vma, pad_vma, m, show_smap, true);
 
 	return 0;
 }
@@ -1347,11 +1267,8 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 			for (vma = mm->mmap; vma; vma = vma->vm_next) {
 				if (!(vma->vm_flags & VM_SOFTDIRTY))
 					continue;
-				vm_write_begin(vma);
-				WRITE_ONCE(vma->vm_flags,
-					vma->vm_flags & ~VM_SOFTDIRTY);
+				vma->vm_flags &= ~VM_SOFTDIRTY;
 				vma_set_page_prot(vma);
-				vm_write_end(vma);
 			}
 
 			inc_tlb_flush_pending(mm);

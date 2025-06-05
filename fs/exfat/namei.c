@@ -346,7 +346,7 @@ static int exfat_find_empty_entry(struct inode *inode,
 		}
 
 		/* allocate a cluster */
-		ret = exfat_alloc_cluster(inode, 1, &clu, IS_DIRSYNC(inode));
+		ret = exfat_alloc_cluster(inode, 1, &clu);
 		if (ret)
 			return ret;
 

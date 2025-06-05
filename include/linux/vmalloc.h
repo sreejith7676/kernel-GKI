@@ -9,7 +9,6 @@
 #include <asm/page.h>		/* pgprot_t */
 #include <linux/rbtree.h>
 #include <linux/overflow.h>
-#include <linux/android_vendor.h>
 
 #include <asm/vmalloc.h>
 
@@ -58,7 +57,6 @@ struct vm_struct {
 	unsigned int		nr_pages;
 	phys_addr_t		phys_addr;
 	const void		*caller;
-	ANDROID_OEM_DATA(1);
 };
 
 struct vmap_area {
@@ -249,8 +247,5 @@ pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
 
 int register_vmap_purge_notifier(struct notifier_block *nb);
 int unregister_vmap_purge_notifier(struct notifier_block *nb);
-
-/* Allow disabling lazy TLB flushing */
-extern bool lazy_vunmap_enable;
 
 #endif /* _LINUX_VMALLOC_H */

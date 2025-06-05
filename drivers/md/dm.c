@@ -28,7 +28,6 @@
 #include <linux/refcount.h>
 #include <linux/part_stat.h>
 #include <linux/blk-crypto.h>
-#include <linux/keyslot-manager.h>
 
 #define DM_MSG_PREFIX "core"
 
@@ -1783,19 +1782,6 @@ static const struct dax_operations dm_dax_ops;
 
 static void dm_wq_work(struct work_struct *work);
 
-#ifdef CONFIG_BLK_INLINE_ENCRYPTION
-static void dm_queue_destroy_keyslot_manager(struct request_queue *q)
-{
-	dm_destroy_keyslot_manager(q->ksm);
-}
-
-#else /* CONFIG_BLK_INLINE_ENCRYPTION */
-
-static inline void dm_queue_destroy_keyslot_manager(struct request_queue *q)
-{
-}
-#endif /* !CONFIG_BLK_INLINE_ENCRYPTION */
-
 static void cleanup_mapped_device(struct mapped_device *md)
 {
 	if (md->wq)
@@ -1817,10 +1803,8 @@ static void cleanup_mapped_device(struct mapped_device *md)
 		put_disk(md->disk);
 	}
 
-	if (md->queue) {
-		dm_queue_destroy_keyslot_manager(md->queue);
+	if (md->queue)
 		blk_cleanup_queue(md->queue);
-	}
 
 	cleanup_srcu_struct(&md->io_barrier);
 
@@ -2479,19 +2463,27 @@ static int lock_fs(struct mapped_device *md)
 {
 	int r;
 
-	WARN_ON(test_bit(DMF_FROZEN, &md->flags));
+	WARN_ON(md->frozen_sb);
 
-	r = freeze_bdev(md->bdev);
-	if (!r)
-		set_bit(DMF_FROZEN, &md->flags);
-	return r;
+	md->frozen_sb = freeze_bdev(md->bdev);
+	if (IS_ERR(md->frozen_sb)) {
+		r = PTR_ERR(md->frozen_sb);
+		md->frozen_sb = NULL;
+		return r;
+	}
+
+	set_bit(DMF_FROZEN, &md->flags);
+
+	return 0;
 }
 
 static void unlock_fs(struct mapped_device *md)
 {
 	if (!test_bit(DMF_FROZEN, &md->flags))
 		return;
-	thaw_bdev(md->bdev);
+
+	thaw_bdev(md->bdev, md->frozen_sb);
+	md->frozen_sb = NULL;
 	clear_bit(DMF_FROZEN, &md->flags);
 }
 

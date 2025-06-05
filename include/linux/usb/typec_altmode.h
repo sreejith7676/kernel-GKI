@@ -30,7 +30,6 @@ struct typec_altmode {
 
 	char				*desc;
 	const struct typec_altmode_ops	*ops;
-	ANDROID_KABI_RESERVE(1);
 };
 
 #define to_typec_altmode(d) container_of(d, struct typec_altmode, dev)
@@ -64,7 +63,6 @@ struct typec_altmode_ops {
 	int (*notify)(struct typec_altmode *altmode, unsigned long conf,
 		      void *data);
 	int (*activate)(struct typec_altmode *altmode, int activate);
-	ANDROID_KABI_RESERVE(1);
 };
 
 int typec_altmode_enter(struct typec_altmode *altmode, u32 *vdo);
@@ -132,16 +130,6 @@ static inline enum typec_orientation
 typec_altmode_get_orientation(struct typec_altmode *altmode)
 {
 	return typec_get_orientation(typec_altmode2port(altmode));
-}
-
-/**
- * typec_altmode_get_svdm_version - Get negotiated SVDM version
- * @altmode: Handle to the alternate mode
- */
-static inline int
-typec_altmode_get_svdm_version(struct typec_altmode *altmode)
-{
-	return typec_get_negotiated_svdm_version(typec_altmode2port(altmode));
 }
 
 /**

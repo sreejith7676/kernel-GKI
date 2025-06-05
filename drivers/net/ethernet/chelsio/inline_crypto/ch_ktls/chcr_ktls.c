@@ -9,7 +9,6 @@
 #include <linux/ip.h>
 #include <net/ipv6.h>
 #include <linux/netdevice.h>
-#include <crypto/aes.h>
 #include "chcr_ktls.h"
 
 static LIST_HEAD(uld_ctx_list);
@@ -76,7 +75,7 @@ static int chcr_ktls_save_keys(struct chcr_ktls_info *tx_info,
 	unsigned char ghash_h[TLS_CIPHER_AES_GCM_256_TAG_SIZE];
 	struct tls12_crypto_info_aes_gcm_128 *info_128_gcm;
 	struct ktls_key_ctx *kctx = &tx_info->key_ctx;
-	struct crypto_aes_ctx aes_ctx;
+	struct crypto_cipher *cipher;
 	unsigned char *key, *salt;
 
 	switch (crypto_info->cipher_type) {
@@ -137,14 +136,18 @@ static int chcr_ktls_save_keys(struct chcr_ktls_info *tx_info,
 	/* Calculate the H = CIPH(K, 0 repeated 16 times).
 	 * It will go in key context
 	 */
-
-	ret = aes_expandkey(&aes_ctx, key, keylen);
-	if (ret)
+	cipher = crypto_alloc_cipher("aes", 0, 0);
+	if (IS_ERR(cipher)) {
+		ret = -ENOMEM;
 		goto out;
+	}
+
+	ret = crypto_cipher_setkey(cipher, key, keylen);
+	if (ret)
+		goto out1;
 
 	memset(ghash_h, 0, ghash_size);
-	aes_encrypt(&aes_ctx, ghash_h, ghash_h);
-	memzero_explicit(&aes_ctx, sizeof(aes_ctx));
+	crypto_cipher_encrypt_one(cipher, ghash_h, ghash_h);
 
 	/* fill the Key context */
 	if (direction == TLS_OFFLOAD_CTX_DIR_TX) {
@@ -153,7 +156,7 @@ static int chcr_ktls_save_keys(struct chcr_ktls_info *tx_info,
 						 key_ctx_size >> 4);
 	} else {
 		ret = -EINVAL;
-		goto out;
+		goto out1;
 	}
 
 	memcpy(kctx->salt, salt, tx_info->salt_size);
@@ -161,6 +164,8 @@ static int chcr_ktls_save_keys(struct chcr_ktls_info *tx_info,
 	memcpy(kctx->key + keylen, ghash_h, ghash_size);
 	tx_info->key_ctx_len = key_ctx_size;
 
+out1:
+	crypto_free_cipher(cipher);
 out:
 	return ret;
 }

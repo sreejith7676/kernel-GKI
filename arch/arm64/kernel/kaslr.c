@@ -19,7 +19,6 @@
 #include <asm/memory.h>
 #include <asm/mmu.h>
 #include <asm/sections.h>
-#include <asm/setup.h>
 
 enum kaslr_status {
 	KASLR_ENABLED,
@@ -51,7 +50,26 @@ static __init u64 get_kaslr_seed(void *fdt)
 	return ret;
 }
 
-struct arm64_ftr_override kaslr_feature_override __initdata;
+static __init const u8 *kaslr_get_cmdline(void *fdt)
+{
+	static __initconst const u8 default_cmdline[] = CONFIG_CMDLINE;
+
+	if (!IS_ENABLED(CONFIG_CMDLINE_FORCE)) {
+		int node;
+		const u8 *prop;
+
+		node = fdt_path_offset(fdt, "/chosen");
+		if (node < 0)
+			goto out;
+
+		prop = fdt_getprop(fdt, node, "bootargs", NULL);
+		if (!prop)
+			goto out;
+		return prop;
+	}
+out:
+	return default_cmdline;
+}
 
 /*
  * This routine will be executed with the kernel mapped at its default virtual
@@ -61,11 +79,13 @@ struct arm64_ftr_override kaslr_feature_override __initdata;
  * containing function pointers) to be reinitialized, and zero-initialized
  * .bss variables will be reset to 0.
  */
-u64 __init kaslr_early_init(void)
+u64 __init kaslr_early_init(u64 dt_phys)
 {
 	void *fdt;
 	u64 seed, offset, mask, module_range;
+	const u8 *cmdline, *str;
 	unsigned long raw;
+	int size;
 
 	/*
 	 * Set a reasonable default for module_alloc_base in case
@@ -79,7 +99,8 @@ u64 __init kaslr_early_init(void)
 	 * and proceed with KASLR disabled. We will make another
 	 * attempt at mapping the FDT in setup_machine()
 	 */
-	fdt = get_early_fdt_ptr();
+	early_fixmap_init();
+	fdt = fixmap_remap_fdt(dt_phys, &size, PAGE_KERNEL);
 	if (!fdt) {
 		kaslr_status = KASLR_DISABLED_FDT_REMAP;
 		return 0;
@@ -94,7 +115,9 @@ u64 __init kaslr_early_init(void)
 	 * Check if 'nokaslr' appears on the command line, and
 	 * return 0 if that is the case.
 	 */
-	if (kaslr_feature_override.val & kaslr_feature_override.mask & 0xf) {
+	cmdline = kaslr_get_cmdline(fdt);
+	str = strstr(cmdline, "nokaslr");
+	if (str == cmdline || (str > cmdline && *(str - 1) == ' ')) {
 		kaslr_status = KASLR_DISABLED_CMDLINE;
 		return 0;
 	}
@@ -128,17 +151,14 @@ u64 __init kaslr_early_init(void)
 	/* use the top 16 bits to randomize the linear region */
 	memstart_offset_seed = seed >> 48;
 
-	if (!IS_ENABLED(CONFIG_KASAN_VMALLOC) &&
-	    (IS_ENABLED(CONFIG_KASAN_GENERIC) ||
-	     IS_ENABLED(CONFIG_KASAN_SW_TAGS)))
+	if (IS_ENABLED(CONFIG_KASAN))
 		/*
-		 * KASAN without KASAN_VMALLOC does not expect the module region
-		 * to intersect the vmalloc region, since shadow memory is
-		 * allocated for each module at load time, whereas the vmalloc
-		 * region is shadowed by KASAN zero pages. So keep modules
-		 * out of the vmalloc region if KASAN is enabled without
-		 * KASAN_VMALLOC, and put the kernel well within 4 GB of the
-		 * module region.
+		 * KASAN does not expect the module region to intersect the
+		 * vmalloc region, since shadow memory is allocated for each
+		 * module at load time, whereas the vmalloc region is shadowed
+		 * by KASAN zero pages. So keep modules out of the vmalloc
+		 * region if KASAN is enabled, and put the kernel well within
+		 * 4 GB of the module region.
 		 */
 		return offset % SZ_2G;
 

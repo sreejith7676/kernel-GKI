@@ -14,7 +14,6 @@
 #include <linux/of_device.h>
 #include <linux/reset.h>
 #include <linux/clk.h>
-#include <linux/module.h>
 
 /* AO Offsets */
 
@@ -365,7 +364,6 @@ static const struct of_device_id meson_gx_pwrc_vpu_match_table[] = {
 	},
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, meson_gx_pwrc_vpu_match_table);
 
 static struct platform_driver meson_gx_pwrc_vpu_driver = {
 	.probe	= meson_gx_pwrc_vpu_probe,
@@ -375,5 +373,4 @@ static struct platform_driver meson_gx_pwrc_vpu_driver = {
 		.of_match_table	= meson_gx_pwrc_vpu_match_table,
 	},
 };
-module_platform_driver(meson_gx_pwrc_vpu_driver);
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(meson_gx_pwrc_vpu_driver);

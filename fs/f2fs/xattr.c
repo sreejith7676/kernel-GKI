@@ -44,7 +44,7 @@ static void xattr_free(struct f2fs_sb_info *sbi, void *xattr_addr,
 
 static int f2fs_xattr_generic_get(const struct xattr_handler *handler,
 		struct dentry *unused, struct inode *inode,
-		const char *name, void *buffer, size_t size, int flags)
+		const char *name, void *buffer, size_t size)
 {
 	struct f2fs_sb_info *sbi = F2FS_SB(inode->i_sb);
 
@@ -99,7 +99,7 @@ static bool f2fs_xattr_trusted_list(struct dentry *dentry)
 
 static int f2fs_xattr_advise_get(const struct xattr_handler *handler,
 		struct dentry *unused, struct inode *inode,
-		const char *name, void *buffer, size_t size, int flags)
+		const char *name, void *buffer, size_t size)
 {
 	if (buffer)
 		*((char *)buffer) = F2FS_I(inode)->i_advise;
@@ -327,7 +327,7 @@ static int lookup_all_xattrs(struct inode *inode, struct page *ipage,
 	void *last_addr = NULL;
 	nid_t xnid = F2FS_I(inode)->i_xattr_nid;
 	unsigned int inline_size = inline_xattr_size(inode);
-	int err;
+	int err = 0;
 
 	if (!xnid && !inline_size)
 		return -ENODATA;
@@ -486,7 +486,6 @@ static inline int write_all_xattrs(struct inode *inode, __u32 hsize,
 		f2fs_wait_on_page_writeback(xpage, NODE, true, true);
 	} else {
 		struct dnode_of_data dn;
-
 		set_new_dnode(&dn, inode, NULL, NULL, new_nid);
 		xpage = f2fs_new_node_page(&dn, XATTR_NODE_OFFSET);
 		if (IS_ERR(xpage)) {
@@ -516,7 +515,7 @@ int f2fs_getxattr(struct inode *inode, int index, const char *name,
 		void *buffer, size_t buffer_size, struct page *ipage)
 {
 	struct f2fs_xattr_entry *entry = NULL;
-	int error;
+	int error = 0;
 	unsigned int size, len;
 	void *base_addr = NULL;
 	int base_size;
@@ -529,12 +528,10 @@ int f2fs_getxattr(struct inode *inode, int index, const char *name,
 	if (len > F2FS_NAME_LEN)
 		return -ERANGE;
 
-	if (!ipage)
-		f2fs_down_read(&F2FS_I(inode)->i_xattr_sem);
+	down_read(&F2FS_I(inode)->i_xattr_sem);
 	error = lookup_all_xattrs(inode, ipage, index, len, name,
 				&entry, &base_addr, &base_size, &is_inline);
-	if (!ipage)
-		f2fs_up_read(&F2FS_I(inode)->i_xattr_sem);
+	up_read(&F2FS_I(inode)->i_xattr_sem);
 	if (error)
 		return error;
 
@@ -565,12 +562,12 @@ ssize_t f2fs_listxattr(struct dentry *dentry, char *buffer, size_t buffer_size)
 	struct inode *inode = d_inode(dentry);
 	struct f2fs_xattr_entry *entry;
 	void *base_addr, *last_base_addr;
-	int error;
+	int error = 0;
 	size_t rest = buffer_size;
 
-	f2fs_down_read(&F2FS_I(inode)->i_xattr_sem);
+	down_read(&F2FS_I(inode)->i_xattr_sem);
 	error = read_all_xattrs(inode, NULL, &base_addr);
-	f2fs_up_read(&F2FS_I(inode)->i_xattr_sem);
+	up_read(&F2FS_I(inode)->i_xattr_sem);
 	if (error)
 		return error;
 
@@ -630,12 +627,13 @@ static int __f2fs_setxattr(struct inode *inode, int index,
 			const char *name, const void *value, size_t size,
 			struct page *ipage, int flags)
 {
+	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	struct f2fs_xattr_entry *here, *last;
 	void *base_addr, *last_base_addr;
 	int found, newsize;
 	size_t len;
 	__u32 new_hsize;
-	int error;
+	int error = 0;
 
 	if (name == NULL)
 		return -EINVAL;
@@ -759,17 +757,26 @@ static int __f2fs_setxattr(struct inode *inode, int index,
 	if (index == F2FS_XATTR_INDEX_ENCRYPTION &&
 			!strcmp(name, F2FS_XATTR_NAME_ENCRYPTION_CONTEXT))
 		f2fs_set_encrypted_inode(inode);
-	f2fs_mark_inode_dirty_sync(inode, true);
-	if (!error && S_ISDIR(inode->i_mode))
-		set_sbi_flag(F2FS_I_SB(inode), SBI_NEED_CP);
 
+	if (!S_ISDIR(inode->i_mode))
+		goto same;
+	/*
+	 * In restrict mode, fsync() always try to trigger checkpoint for all
+	 * metadata consistency, in other mode, it triggers checkpoint when
+	 * parent's xattr metadata was updated.
+	 */
+	if (F2FS_OPTION(sbi).fsync_mode == FSYNC_MODE_STRICT)
+		set_sbi_flag(sbi, SBI_NEED_CP);
+	else
+		f2fs_add_ino_entry(sbi, inode->i_ino, XATTR_DIR_INO);
 same:
 	if (is_inode_flag_set(inode, FI_ACL_MODE)) {
 		inode->i_mode = F2FS_I(inode)->i_acl_mode;
-		inode->i_ctime = current_time(inode);
 		clear_inode_flag(inode, FI_ACL_MODE);
 	}
 
+	inode->i_ctime = current_time(inode);
+	f2fs_mark_inode_dirty_sync(inode, true);
 exit:
 	kfree(base_addr);
 	return error;
@@ -798,9 +805,9 @@ int f2fs_setxattr(struct inode *inode, int index, const char *name,
 	f2fs_balance_fs(sbi, true);
 
 	f2fs_lock_op(sbi);
-	f2fs_down_write(&F2FS_I(inode)->i_xattr_sem);
+	down_write(&F2FS_I(inode)->i_xattr_sem);
 	err = __f2fs_setxattr(inode, index, name, value, size, ipage, flags);
-	f2fs_up_write(&F2FS_I(inode)->i_xattr_sem);
+	up_write(&F2FS_I(inode)->i_xattr_sem);
 	f2fs_unlock_op(sbi);
 
 	f2fs_update_time(sbi, REQ_TIME);

@@ -179,10 +179,12 @@ enum {
 /*
  * BG_GC means the background cleaning job.
  * FG_GC means the on-demand cleaning job.
+ * FORCE_FG_GC means on-demand cleaning job in background.
  */
 enum {
 	BG_GC = 0,
 	FG_GC,
+	FORCE_FG_GC,
 };
 
 /* for a function parameter to select a victim segment */
@@ -295,9 +297,6 @@ struct dirty_seglist_info {
 	struct mutex seglist_lock;		/* lock for segment bitmaps */
 	int nr_dirty[NR_DIRTY_TYPE];		/* # of dirty segments */
 	unsigned long *victim_secmap;		/* background GC victims */
-	unsigned long *pinned_secmap;		/* pinned victims from foreground GC */
-	unsigned int pinned_secmap_cnt;		/* count of victims which has pinned data */
-	bool enable_pin_section;		/* enable pinning section */
 };
 
 /* victim selection function for cleaning and SSR */
@@ -629,29 +628,11 @@ static inline bool has_not_enough_free_secs(struct f2fs_sb_info *sbi,
 	return !has_curseg_enough_space(sbi, node_blocks, dent_blocks);
 }
 
-static inline bool has_enough_free_blks(struct f2fs_sb_info *sbi)
-{
-	unsigned int total_free_blocks = 0;
-	unsigned int avail_user_block_count;
-
-	spin_lock(&sbi->stat_lock);
-
-	avail_user_block_count = get_available_block_count(sbi, NULL, true);
-	total_free_blocks = avail_user_block_count - (unsigned int)valid_user_blocks(sbi);
-
-	spin_unlock(&sbi->stat_lock);
-
-	return total_free_blocks > 0;
-}
-
 static inline bool f2fs_is_checkpoint_ready(struct f2fs_sb_info *sbi)
 {
 	if (likely(!is_sbi_flag_set(sbi, SBI_CP_DISABLED)))
 		return true;
 	if (likely(!has_not_enough_free_secs(sbi, 0, 0)))
-		return true;
-	if (!f2fs_lfs_mode(sbi) &&
-		likely(has_enough_free_blks(sbi)))
 		return true;
 	return false;
 }
@@ -681,9 +662,7 @@ static inline int utilization(struct f2fs_sb_info *sbi)
  *                     pages over min_fsync_blocks. (=default option)
  * F2FS_IPU_ASYNC - do IPU given by asynchronous write requests.
  * F2FS_IPU_NOCACHE - disable IPU bio cache.
- * F2FS_IPU_HONOR_OPU_WRITE - use OPU write prior to IPU write if inode has
- *                            FI_OPU_WRITE flag.
- * F2FS_IPU_DISABLE - disable IPU. (=default option in LFS mode)
+ * F2FS_IPUT_DISABLE - disable IPU. (=default option in LFS mode)
  */
 #define DEF_MIN_IPU_UTIL	70
 #define DEF_MIN_FSYNC_BLOCKS	8
@@ -699,7 +678,6 @@ enum {
 	F2FS_IPU_FSYNC,
 	F2FS_IPU_ASYNC,
 	F2FS_IPU_NOCACHE,
-	F2FS_IPU_HONOR_OPU_WRITE,
 };
 
 static inline unsigned int curseg_segno(struct f2fs_sb_info *sbi,

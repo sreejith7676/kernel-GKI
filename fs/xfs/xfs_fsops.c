@@ -423,10 +423,13 @@ xfs_fs_goingdown(
 {
 	switch (inflags) {
 	case XFS_FSOP_GOING_FLAGS_DEFAULT: {
-		if (!freeze_bdev(mp->m_super->s_bdev)) {
+		struct super_block *sb = freeze_bdev(mp->m_super->s_bdev);
+
+		if (sb && !IS_ERR(sb)) {
 			xfs_force_shutdown(mp, SHUTDOWN_FORCE_UMOUNT);
-			thaw_bdev(mp->m_super->s_bdev);
+			thaw_bdev(sb->s_bdev, sb);
 		}
+
 		break;
 	}
 	case XFS_FSOP_GOING_FLAGS_LOGFLUSH:

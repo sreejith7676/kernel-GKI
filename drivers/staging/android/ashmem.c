@@ -894,8 +894,6 @@ static void ashmem_show_fdinfo(struct seq_file *m, struct file *file)
 		seq_printf(m, "name:\t%s\n",
 			   asma->name + ASHMEM_NAME_PREFIX_LEN);
 
-	seq_printf(m, "size:\t%zu\n", asma->size);
-
 	mutex_unlock(&ashmem_mutex);
 }
 #endif
@@ -914,15 +912,6 @@ static const struct file_operations ashmem_fops = {
 	.show_fdinfo = ashmem_show_fdinfo,
 #endif
 };
-
-/*
- * is_ashmem_file - Check if struct file* is associated with ashmem
- */
-int is_ashmem_file(struct file *file)
-{
-	return file->f_op == &ashmem_fops;
-}
-EXPORT_SYMBOL_GPL(is_ashmem_file);
 
 static struct miscdevice ashmem_misc = {
 	.minor = MISC_DYNAMIC_MINOR,

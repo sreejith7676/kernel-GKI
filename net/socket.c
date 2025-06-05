@@ -314,8 +314,7 @@ static const struct dentry_operations sockfs_dentry_operations = {
 
 static int sockfs_xattr_get(const struct xattr_handler *handler,
 			    struct dentry *dentry, struct inode *inode,
-			    const char *suffix, void *value, size_t size,
-			    int flags)
+			    const char *suffix, void *value, size_t size)
 {
 	if (value) {
 		if (dentry->d_name.len + 1 > size)
@@ -2156,6 +2155,9 @@ SYSCALL_DEFINE5(setsockopt, int, fd, int, level, int, optname,
 {
 	return __sys_setsockopt(fd, level, optname, optval, optlen);
 }
+
+INDIRECT_CALLABLE_DECLARE(bool tcp_bpf_bypass_getsockopt(int level,
+							 int optname));
 
 /*
  *	Get a socket option. Because we don't know the option lengths we have

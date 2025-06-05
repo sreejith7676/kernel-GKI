@@ -134,6 +134,8 @@ enum lockdown_reason {
 	LOCKDOWN_CONFIDENTIALITY_MAX,
 };
 
+extern const char *const lockdown_reasons[LOCKDOWN_CONFIDENTIALITY_MAX+1];
+
 /* These functions are in security/commoncap.c */
 extern int cap_capable(const struct cred *cred, struct user_namespace *ns,
 		       int cap, unsigned int opts);
@@ -325,9 +327,6 @@ void security_inode_free(struct inode *inode);
 int security_inode_init_security(struct inode *inode, struct inode *dir,
 				 const struct qstr *qstr,
 				 initxattrs initxattrs, void *fs_data);
-int security_inode_init_security_anon(struct inode *inode,
-				      const struct qstr *name,
-				      const struct inode *context_inode);
 int security_old_inode_init_security(struct inode *inode, struct inode *dir,
 				     const struct qstr *qstr, const char **name,
 				     void **value, size_t *len);
@@ -740,13 +739,6 @@ static inline int security_inode_init_security(struct inode *inode,
 						const struct qstr *qstr,
 						const initxattrs xattrs,
 						void *fs_data)
-{
-	return 0;
-}
-
-static inline int security_inode_init_security_anon(struct inode *inode,
-						    const struct qstr *name,
-						    const struct inode *context_inode)
 {
 	return 0;
 }

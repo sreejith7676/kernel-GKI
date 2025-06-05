@@ -12,7 +12,6 @@
 #include <linux/posix-timers.h>
 #include <linux/mm_types.h>
 #include <asm/ptrace.h>
-#include <linux/android_kabi.h>
 
 /*
  * Types defining task->signal and task->sighand and APIs using them:
@@ -126,7 +125,7 @@ struct signal_struct {
 #ifdef CONFIG_POSIX_TIMERS
 
 	/* POSIX.1b Interval Timers */
-	int			posix_timer_id;
+	unsigned int		next_posix_timer_id;
 	struct list_head	posix_timers;
 
 	/* ITIMER_REAL timer for the process */
@@ -236,11 +235,6 @@ struct signal_struct {
 						 * and may have inconsistent
 						 * permissions.
 						 */
-
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } __randomize_layout;
 
 /*

@@ -7,7 +7,6 @@
 #include <linux/hardirq.h>
 #include <linux/irqflags.h>
 #include <linux/sched/task_stack.h>
-#include <linux/scs.h>
 #include <linux/uaccess.h>
 
 #include <asm/alternative.h>
@@ -42,14 +41,6 @@ DEFINE_PER_CPU(unsigned long *, sdei_stack_critical_ptr);
 DEFINE_PER_CPU(struct sdei_registered_event *, sdei_active_normal_event);
 DEFINE_PER_CPU(struct sdei_registered_event *, sdei_active_critical_event);
 
-DECLARE_PER_CPU(unsigned long *, sdei_shadow_call_stack_normal_ptr);
-DECLARE_PER_CPU(unsigned long *, sdei_shadow_call_stack_critical_ptr);
-
-#ifdef CONFIG_SHADOW_CALL_STACK
-DEFINE_PER_CPU(unsigned long *, sdei_shadow_call_stack_normal_ptr);
-DEFINE_PER_CPU(unsigned long *, sdei_shadow_call_stack_critical_ptr);
-#endif
-
 static void _free_sdei_stack(unsigned long * __percpu *ptr, int cpu)
 {
 	unsigned long *p;
@@ -64,9 +55,6 @@ static void _free_sdei_stack(unsigned long * __percpu *ptr, int cpu)
 static void free_sdei_stacks(void)
 {
 	int cpu;
-
-	if (!IS_ENABLED(CONFIG_VMAP_STACK))
-		return;
 
 	for_each_possible_cpu(cpu) {
 		_free_sdei_stack(&sdei_stack_normal_ptr, cpu);
@@ -91,9 +79,6 @@ static int init_sdei_stacks(void)
 	int cpu;
 	int err = 0;
 
-	if (!IS_ENABLED(CONFIG_VMAP_STACK))
-		return 0;
-
 	for_each_possible_cpu(cpu) {
 		err = _init_sdei_stack(&sdei_stack_normal_ptr, cpu);
 		if (err)
@@ -105,62 +90,6 @@ static int init_sdei_stacks(void)
 
 	if (err)
 		free_sdei_stacks();
-
-	return err;
-}
-
-static void _free_sdei_scs(unsigned long * __percpu *ptr, int cpu)
-{
-	void *s;
-
-	s = per_cpu(*ptr, cpu);
-	if (s) {
-		per_cpu(*ptr, cpu) = NULL;
-		scs_free(s);
-	}
-}
-
-static void free_sdei_scs(void)
-{
-	int cpu;
-
-	for_each_possible_cpu(cpu) {
-		_free_sdei_scs(&sdei_shadow_call_stack_normal_ptr, cpu);
-		_free_sdei_scs(&sdei_shadow_call_stack_critical_ptr, cpu);
-	}
-}
-
-static int _init_sdei_scs(unsigned long * __percpu *ptr, int cpu)
-{
-	void *s;
-
-	s = scs_alloc(cpu_to_node(cpu));
-	if (!s)
-		return -ENOMEM;
-	per_cpu(*ptr, cpu) = s;
-
-	return 0;
-}
-
-static int init_sdei_scs(void)
-{
-	int cpu;
-	int err = 0;
-
-	if (!IS_ENABLED(CONFIG_SHADOW_CALL_STACK))
-		return 0;
-
-	for_each_possible_cpu(cpu) {
-		err = _init_sdei_scs(&sdei_shadow_call_stack_normal_ptr, cpu);
-		if (err)
-			break;
-		err = _init_sdei_scs(&sdei_shadow_call_stack_critical_ptr, cpu);
-		if (err)
-			break;
-	}
-
-	if (err)
-		free_sdei_scs();
 
 	return err;
 }
@@ -205,14 +134,13 @@ unsigned long sdei_arch_get_entry_point(int conduit)
 	 */
 	if (is_hyp_mode_available() && !is_kernel_in_hyp_mode()) {
 		pr_err("Not supported on this hardware/boot configuration\n");
-		goto out_err;
+		return 0;
 	}
 
-	if (init_sdei_stacks())
-		goto out_err;
-
-	if (init_sdei_scs())
-		goto out_err_free_stacks;
+	if (IS_ENABLED(CONFIG_VMAP_STACK)) {
+		if (init_sdei_stacks())
+			return 0;
+	}
 
 	sdei_exit_mode = (conduit == SMCCC_CONDUIT_HVC) ? SDEI_EXIT_HVC : SDEI_EXIT_SMC;
 
@@ -227,10 +155,6 @@ unsigned long sdei_arch_get_entry_point(int conduit)
 #endif /* CONFIG_UNMAP_KERNEL_AT_EL0 */
 		return (unsigned long)__sdei_asm_handler;
 
-out_err_free_stacks:
-	free_sdei_stacks();
-out_err:
-	return 0;
 }
 
 /*

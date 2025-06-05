@@ -15,7 +15,6 @@
 #include <linux/cpumask.h>
 #include <linux/nodemask.h>
 #include <linux/mm.h>
-#include <linux/mmu_context.h>
 #include <linux/jump_label.h>
 
 #ifdef CONFIG_CPUSETS
@@ -55,7 +54,6 @@ extern int cpuset_init(void);
 extern void cpuset_init_smp(void);
 extern void cpuset_force_rebuild(void);
 extern void cpuset_update_active_cpus(void);
-extern void cpuset_update_active_cpus_affine(int cpu);
 extern void cpuset_wait_for_hotplug(void);
 extern void inc_dl_tasks_cs(struct task_struct *task);
 extern void dec_dl_tasks_cs(struct task_struct *task);
@@ -166,8 +164,6 @@ static inline void set_mems_allowed(nodemask_t nodemask)
 	task_unlock(current);
 }
 
-extern void cpuset_hotplug_workfn(struct work_struct *work);
-
 #else /* !CONFIG_CPUSETS */
 
 static inline bool cpusets_enabled(void) { return false; }
@@ -176,8 +172,6 @@ static inline int cpuset_init(void) { return 0; }
 static inline void cpuset_init_smp(void) {}
 
 static inline void cpuset_force_rebuild(void) { }
-
-static inline void cpuset_update_active_cpus_affine(int cpu) {}
 
 static inline void cpuset_update_active_cpus(void)
 {
@@ -194,7 +188,7 @@ static inline void cpuset_unlock(void) { }
 static inline void cpuset_cpus_allowed(struct task_struct *p,
 				       struct cpumask *mask)
 {
-	cpumask_copy(mask, task_cpu_possible_mask(p));
+	cpumask_copy(mask, cpu_possible_mask);
 }
 
 static inline void cpuset_cpus_allowed_fallback(struct task_struct *p)
@@ -289,8 +283,6 @@ static inline bool read_mems_allowed_retry(unsigned int seq)
 {
 	return false;
 }
-
-static inline void cpuset_hotplug_workfn(struct work_struct *work) {}
 
 #endif /* !CONFIG_CPUSETS */
 

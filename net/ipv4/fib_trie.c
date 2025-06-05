@@ -1145,22 +1145,6 @@ static int fib_insert_alias(struct trie *t, struct key_vector *tp,
 	return 0;
 }
 
-static bool fib_valid_key_len(u32 key, u8 plen, struct netlink_ext_ack *extack)
-{
-	if (plen > KEYLENGTH) {
-		NL_SET_ERR_MSG(extack, "Invalid prefix length");
-		return false;
-	}
-
-	if ((plen < KEYLENGTH) && (key << plen)) {
-		NL_SET_ERR_MSG(extack,
-			       "Invalid prefix for given prefix length");
-		return false;
-	}
-
-	return true;
-}
-
 static void fib_remove_alias(struct trie *t, struct key_vector *tp,
 			     struct key_vector *l, struct fib_alias *old);
 
@@ -1180,9 +1164,6 @@ int fib_table_insert(struct net *net, struct fib_table *tb,
 	int err;
 
 	key = ntohl(cfg->fc_dst);
-
-	if (!fib_valid_key_len(key, plen, extack))
-		return -EINVAL;
 
 	pr_debug("Insert table=%u %08x/%d\n", tb->tb_id, key, plen);
 
@@ -1384,11 +1365,8 @@ bool fib_lookup_good_nhc(const struct fib_nh_common *nhc, int fib_flags,
 	    !(fib_flags & FIB_LOOKUP_IGNORE_LINKSTATE))
 		return false;
 
-	if (!(flp->flowi4_flags & FLOWI_FLAG_SKIP_NH_OIF)) {
-		if (flp->flowi4_oif &&
-		    flp->flowi4_oif != nhc->nhc_oif)
-			return false;
-	}
+	if (flp->flowi4_oif && flp->flowi4_oif != nhc->nhc_oif)
+		return false;
 
 	return true;
 }
@@ -1673,9 +1651,6 @@ int fib_table_delete(struct net *net, struct fib_table *tb,
 	u32 key;
 
 	key = ntohl(cfg->fc_dst);
-
-	if (!fib_valid_key_len(key, plen, extack))
-		return -EINVAL;
 
 	l = fib_find_node(t, &tp, key);
 	if (!l)
@@ -1977,6 +1952,7 @@ void fib_table_flush_external(struct fib_table *tb)
 int fib_table_flush(struct net *net, struct fib_table *tb, bool flush_all)
 {
 	struct trie *t = (struct trie *)tb->tb_data;
+	struct nl_info info = { .nl_net = net };
 	struct key_vector *pn = t->kv;
 	unsigned long cindex = 1;
 	struct hlist_node *tmp;
@@ -2039,6 +2015,9 @@ int fib_table_flush(struct net *net, struct fib_table *tb, bool flush_all)
 
 			fib_notify_alias_delete(net, n->key, &n->leaf, fa,
 						NULL);
+			if (fi->pfsrc_removed)
+				rtmsg_fib(RTM_DELROUTE, htonl(n->key), fa,
+					  KEYLENGTH - fa->fa_slen, tb->tb_id, &info, 0);
 			hlist_del_rcu(&fa->fa_list);
 			fib_release_info(fa->fa_info);
 			alias_free_mem_rcu(fa);

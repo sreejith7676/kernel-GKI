@@ -10,7 +10,6 @@
 #include <linux/dma-iommu.h>
 #include <xen/xen.h>
 #include <xen/swiotlb-xen.h>
-#include <trace/hooks/iommu.h>
 
 #include <asm/cacheflush.h>
 
@@ -50,11 +49,8 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 		   ARCH_DMA_MINALIGN, cls);
 
 	dev->dma_coherent = coherent;
-	if (iommu) {
+	if (iommu)
 		iommu_setup_dma_ops(dev, dma_base, size);
-		trace_android_vh_iommu_setup_dma_ops(dev, dma_base, size);
-		trace_android_rvh_iommu_setup_dma_ops(dev, dma_base, size);
-	}
 
 #ifdef CONFIG_XEN
 	if (xen_initial_domain())

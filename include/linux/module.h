@@ -26,8 +26,6 @@
 #include <linux/tracepoint-defs.h>
 #include <linux/srcu.h>
 #include <linux/static_call_types.h>
-#include <linux/cfi.h>
-#include <linux/android_kabi.h>
 
 #include <linux/percpu.h>
 #include <asm/module.h>
@@ -133,17 +131,13 @@ extern void cleanup_module(void);
 #define module_init(initfn)					\
 	static inline initcall_t __maybe_unused __inittest(void)		\
 	{ return initfn; }					\
-	int init_module(void) __copy(initfn) 			\
-		__attribute__((alias(#initfn)));		\
-	__CFI_ADDRESSABLE(init_module)
+	int init_module(void) __copy(initfn) __attribute__((alias(#initfn)));
 
 /* This is only required if you want to be unloadable. */
 #define module_exit(exitfn)					\
 	static inline exitcall_t __maybe_unused __exittest(void)		\
 	{ return exitfn; }					\
-	void cleanup_module(void) __copy(exitfn) 		\
-		__attribute__((alias(#exitfn))); 		\
-	__CFI_ADDRESSABLE(cleanup_module)
+	void cleanup_module(void) __copy(exitfn) __attribute__((alias(#exitfn)));
 
 #endif
 
@@ -293,7 +287,7 @@ extern typeof(name) __mod_##type##__##name##_device_table		\
  * files require multiple MODULE_FIRMWARE() specifiers */
 #define MODULE_FIRMWARE(_firmware) MODULE_INFO(firmware, _firmware)
 
-#define MODULE_IMPORT_NS(ns)	MODULE_INFO(import_ns, __stringify(ns))
+#define MODULE_IMPORT_NS(ns) MODULE_INFO(import_ns, #ns)
 
 struct notifier_block;
 
@@ -378,17 +372,12 @@ struct module {
 	struct module_attribute *modinfo_attrs;
 	const char *version;
 	const char *srcversion;
-	const char *scmversion;
 	struct kobject *holders_dir;
 
 	/* Exported symbols */
 	const struct kernel_symbol *syms;
 	const s32 *crcs;
 	unsigned int num_syms;
-
-#ifdef CONFIG_CFI_CLANG
-	cfi_check_fn cfi_check;
-#endif
 
 	/* Kernel parameters. */
 #ifdef CONFIG_SYSFS
@@ -415,12 +404,10 @@ struct module {
 	const s32 *unused_gpl_crcs;
 #endif
 
-	/*
-	 * Signature was verified. Unconditionally compiled in Android to
-	 * preserve ABI compatibility between kernels without module
-	 * signing enabled and signed modules.
-	 */
+#ifdef CONFIG_MODULE_SIG
+	/* Signature was verified. */
 	bool sig_ok;
+#endif
 
 	bool async_probe_requested;
 
@@ -547,10 +534,6 @@ struct module {
 	struct error_injection_entry *ei_funcs;
 	unsigned int num_ei_funcs;
 #endif
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
 } ____cacheline_aligned __randomize_layout;
 #ifndef MODULE_ARCH_INIT
 #define MODULE_ARCH_INIT {}
@@ -599,7 +582,7 @@ static inline bool within_module(unsigned long addr, const struct module *mod)
 	return within_module_init(addr, mod) || within_module_core(addr, mod);
 }
 
-/* Search for module by name: must hold module_mutex. */
+/* Search for module by name: must be in a RCU-sched critical section. */
 struct module *find_module(const char *name);
 
 struct symsearch {
@@ -621,13 +604,9 @@ int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
 /* Look for this name: can be of form module:name. */
 unsigned long module_kallsyms_lookup_name(const char *name);
 
-int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
-					     struct module *, unsigned long),
-				   void *data);
-
-extern void __noreturn __module_put_and_exit(struct module *mod,
+extern void __noreturn __module_put_and_kthread_exit(struct module *mod,
 			long code);
-#define module_put_and_exit(code) __module_put_and_exit(THIS_MODULE, code)
+#define module_put_and_kthread_exit(code) __module_put_and_kthread_exit(THIS_MODULE, code)
 
 #ifdef CONFIG_MODULE_UNLOAD
 int module_refcount(struct module *mod);
@@ -808,14 +787,6 @@ static inline unsigned long module_kallsyms_lookup_name(const char *name)
 	return 0;
 }
 
-static inline int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
-							   struct module *,
-							   unsigned long),
-						 void *data)
-{
-	return 0;
-}
-
 static inline int register_module_notifier(struct notifier_block *nb)
 {
 	/* no events will happen anyway, so this can always succeed */
@@ -827,7 +798,7 @@ static inline int unregister_module_notifier(struct notifier_block *nb)
 	return 0;
 }
 
-#define module_put_and_exit(code) do_exit(code)
+#define module_put_and_kthread_exit(code) kthread_exit(code)
 
 static inline void print_modules(void)
 {
@@ -903,5 +874,18 @@ static inline bool module_sig_ok(struct module *module)
 	return true;
 }
 #endif	/* CONFIG_MODULE_SIG */
+
+#if defined(CONFIG_MODULES) && defined(CONFIG_KALLSYMS)
+int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
+					     struct module *, unsigned long),
+				   void *data);
+#else
+static inline int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
+						 struct module *, unsigned long),
+						 void *data)
+{
+	return -EOPNOTSUPP;
+}
+#endif  /* CONFIG_MODULES && CONFIG_KALLSYMS */
 
 #endif /* _LINUX_MODULE_H */

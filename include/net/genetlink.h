@@ -3,7 +3,6 @@
 #define __NET_GENERIC_NETLINK_H
 
 #include <linux/genetlink.h>
-#include <linux/android_kabi.h>
 #include <net/netlink.h>
 #include <net/net_namespace.h>
 
@@ -12,9 +11,12 @@
 /**
  * struct genl_multicast_group - generic netlink multicast group
  * @name: name of the multicast group, names are per-family
+ * @cap_sys_admin: whether %CAP_SYS_ADMIN is required for binding
  */
 struct genl_multicast_group {
 	char			name[GENL_NAMSIZ];
+	u8			flags;
+	u8			cap_sys_admin:1;
 };
 
 struct genl_ops;
@@ -68,8 +70,6 @@ struct genl_family {
 	const struct genl_small_ops *small_ops;
 	const struct genl_multicast_group *mcgrps;
 	struct module		*module;
-
-	ANDROID_KABI_RESERVE(1);
 };
 
 /**
@@ -161,8 +161,6 @@ struct genl_ops {
 	u8			internal_flags;
 	u8			flags;
 	u8			validate;
-
-	ANDROID_KABI_RESERVE(1);
 };
 
 /**
@@ -337,13 +335,12 @@ static inline int genlmsg_multicast(const struct genl_family *family,
  * @skb: netlink message as socket buffer
  * @portid: own netlink portid to avoid sending to yourself
  * @group: offset of multicast group in groups array
- * @flags: allocation flags
  *
  * This function must hold the RTNL or rcu_read_lock().
  */
 int genlmsg_multicast_allns(const struct genl_family *family,
 			    struct sk_buff *skb, u32 portid,
-			    unsigned int group, gfp_t flags);
+			    unsigned int group);
 
 /**
  * genlmsg_unicast - unicast a netlink message

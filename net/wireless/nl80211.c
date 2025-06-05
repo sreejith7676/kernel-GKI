@@ -724,9 +724,6 @@ static const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 		NLA_POLICY_EXACT_LEN(IEEE80211_S1G_CAPABILITY_LEN),
 	[NL80211_ATTR_S1G_CAPABILITY_MASK] =
 		NLA_POLICY_EXACT_LEN(IEEE80211_S1G_CAPABILITY_LEN),
-	[NL80211_ATTR_SAE_PWE] =
-		NLA_POLICY_RANGE(NLA_U8, NL80211_SAE_PWE_HUNT_AND_PECK,
-				 NL80211_SAE_PWE_BOTH),
 };
 
 /* policy for the key attributes */
@@ -9757,12 +9754,6 @@ static int nl80211_crypto_settings(struct cfg80211_registered_device *rdev,
 			nla_len(info->attrs[NL80211_ATTR_SAE_PASSWORD]);
 	}
 
-	if (info->attrs[NL80211_ATTR_SAE_PWE])
-		settings->sae_pwe =
-			nla_get_u8(info->attrs[NL80211_ATTR_SAE_PWE]);
-	else
-		settings->sae_pwe = NL80211_SAE_PWE_UNSPECIFIED;
-
 	return 0;
 }
 
@@ -15888,10 +15879,8 @@ void nl80211_common_reg_change_event(enum nl80211_commands cmd_id,
 
 	genlmsg_end(msg, hdr);
 
-	rcu_read_lock();
 	genlmsg_multicast_allns(&nl80211_fam, msg, 0,
-				NL80211_MCGRP_REGULATORY, GFP_ATOMIC);
-	rcu_read_unlock();
+				NL80211_MCGRP_REGULATORY);
 
 	return;
 
@@ -16399,10 +16388,8 @@ void nl80211_send_beacon_hint_event(struct wiphy *wiphy,
 
 	genlmsg_end(msg, hdr);
 
-	rcu_read_lock();
 	genlmsg_multicast_allns(&nl80211_fam, msg, 0,
-				NL80211_MCGRP_REGULATORY, GFP_ATOMIC);
-	rcu_read_unlock();
+				NL80211_MCGRP_REGULATORY);
 
 	return;
 

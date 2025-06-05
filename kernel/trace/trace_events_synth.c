@@ -831,7 +831,6 @@ static int synth_event_reg(struct trace_event_call *call,
 		    enum trace_reg type, void *data)
 {
 	struct synth_event *event = container_of(call, struct synth_event, call);
-	int ret;
 
 	switch (type) {
 #ifdef CONFIG_PERF_EVENTS
@@ -845,7 +844,7 @@ static int synth_event_reg(struct trace_event_call *call,
 		break;
 	}
 
-	ret = trace_event_reg(call, type, data);
+	int ret = trace_event_reg(call, type, data);
 
 	switch (type) {
 #ifdef CONFIG_PERF_EVENTS

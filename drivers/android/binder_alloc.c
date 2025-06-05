@@ -25,7 +25,6 @@
 #include <linux/sizes.h>
 #include "binder_alloc.h"
 #include "binder_trace.h"
-#include <trace/hooks/binder.h>
 
 struct list_lru binder_alloc_lru;
 
@@ -339,7 +338,7 @@ static inline struct vm_area_struct *binder_alloc_get_vma(
 	return vma;
 }
 
-static bool debug_low_async_space_locked(struct binder_alloc *alloc, int pid)
+static void debug_low_async_space_locked(struct binder_alloc *alloc, int pid)
 {
 	/*
 	 * Find the amount and size of buffers allocated by the current caller;
@@ -366,19 +365,13 @@ static bool debug_low_async_space_locked(struct binder_alloc *alloc, int pid)
 
 	/*
 	 * Warn if this pid has more than 50 transactions, or more than 50% of
-	 * async space (which is 25% of total buffer size). Oneway spam is only
-	 * detected when the threshold is exceeded.
+	 * async space (which is 25% of total buffer size).
 	 */
 	if (num_buffers > 50 || total_alloc_size > alloc->buffer_size / 4) {
 		binder_alloc_debug(BINDER_DEBUG_USER_ERROR,
 			     "%d: pid %d spamming oneway? %zd buffers allocated for a total size of %zd\n",
 			      alloc->pid, pid, num_buffers, total_alloc_size);
-		if (!alloc->oneway_spam_detected) {
-			alloc->oneway_spam_detected = true;
-			return true;
-		}
 	}
-	return false;
 }
 
 static struct binder_buffer *binder_alloc_new_buf_locked(
@@ -421,12 +414,11 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 				alloc->pid, extra_buffers_size);
 		return ERR_PTR(-EINVAL);
 	}
+
 	/* Pad 0-size buffers so they get assigned unique addresses */
 	size = max(size, sizeof(void *));
 
-	trace_android_vh_binder_alloc_new_buf_locked(size, alloc, is_async);
-	if (is_async &&
-	    alloc->free_async_space < size + sizeof(struct binder_buffer)) {
+	if (is_async && alloc->free_async_space < size) {
 		binder_alloc_debug(BINDER_DEBUG_BUFFER_ALLOC,
 			     "%d: binder_alloc_buf size %zd failed, no async space left\n",
 			      alloc->pid, size);
@@ -532,7 +524,6 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 	buffer->async_transaction = is_async;
 	buffer->extra_buffers_size = extra_buffers_size;
 	buffer->pid = pid;
-	buffer->oneway_spam_suspect = false;
 	if (is_async) {
 		alloc->free_async_space -= size;
 		binder_alloc_debug(BINDER_DEBUG_BUFFER_ALLOC_ASYNC,
@@ -544,9 +535,7 @@ static struct binder_buffer *binder_alloc_new_buf_locked(
 			 * of async space left (which is less than 10% of total
 			 * buffer size).
 			 */
-			buffer->oneway_spam_suspect = debug_low_async_space_locked(alloc, pid);
-		} else {
-			alloc->oneway_spam_detected = false;
+			debug_low_async_space_locked(alloc, pid);
 		}
 	}
 	return buffer;
@@ -766,9 +755,9 @@ int binder_alloc_mmap_handler(struct binder_alloc *alloc,
 
 	alloc->buffer = (void __user *)vma->vm_start;
 
-	alloc->pages = kvcalloc(alloc->buffer_size / PAGE_SIZE,
-				sizeof(alloc->pages[0]),
-				GFP_KERNEL);
+	alloc->pages = kcalloc(alloc->buffer_size / PAGE_SIZE,
+			       sizeof(alloc->pages[0]),
+			       GFP_KERNEL);
 	if (alloc->pages == NULL) {
 		ret = -ENOMEM;
 		failure_string = "alloc page array";
@@ -793,7 +782,7 @@ int binder_alloc_mmap_handler(struct binder_alloc *alloc,
 	return 0;
 
 err_alloc_buf_struct_failed:
-	kvfree(alloc->pages);
+	kfree(alloc->pages);
 	alloc->pages = NULL;
 err_alloc_pages_failed:
 	alloc->buffer = NULL;
@@ -864,7 +853,7 @@ void binder_alloc_deferred_release(struct binder_alloc *alloc)
 			__free_page(alloc->pages[i].page_ptr);
 			page_count++;
 		}
-		kvfree(alloc->pages);
+		kfree(alloc->pages);
 	}
 	mutex_unlock(&alloc->mutex);
 	if (alloc->vma_vm_mm)

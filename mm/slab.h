@@ -46,7 +46,6 @@ struct kmem_cache {
 #include <linux/kmemleak.h>
 #include <linux/random.h>
 #include <linux/sched/mm.h>
-#include <linux/android_vendor.h>
 
 /*
  * State of the slab allocator.
@@ -91,27 +90,6 @@ struct kmem_cache *kmalloc_slab(size_t, gfp_t);
 #endif
 
 gfp_t kmalloc_fix_flags(gfp_t flags);
-
-#ifdef CONFIG_SLUB
-/*
- * Tracking user of a slab.
- */
-#define TRACK_ADDRS_COUNT 16
-struct track {
-	unsigned long addr;	/* Called from address */
-#ifdef CONFIG_STACKTRACE
-	unsigned long addrs[TRACK_ADDRS_COUNT];	/* Called from address */
-#endif
-	int cpu;		/* Was running on cpu */
-	int pid;		/* Pid context */
-	unsigned long when;	/* When did the operation occur */
-#ifdef CONFIG_STACKTRACE
-	ANDROID_OEM_DATA(1);
-#endif
-};
-
-enum track_item { TRACK_ALLOC, TRACK_FREE };
-#endif
 
 /* Functions provided by the slab allocators */
 int __kmem_cache_create(struct kmem_cache *, slab_flags_t flags);
@@ -237,32 +215,10 @@ DECLARE_STATIC_KEY_TRUE(slub_debug_enabled);
 DECLARE_STATIC_KEY_FALSE(slub_debug_enabled);
 #endif
 extern void print_tracking(struct kmem_cache *s, void *object);
-extern unsigned long get_each_object_track(struct kmem_cache *s,
-		struct page *page, enum track_item alloc,
-		int (*fn)(const struct kmem_cache *, const void *,
-		const struct track *, void *), void *private);
-extern slab_flags_t slub_debug;
-static inline bool __slub_debug_enabled(void)
-{
-	return static_branch_unlikely(&slub_debug_enabled);
-}
 #else
 static inline void print_tracking(struct kmem_cache *s, void *object)
 {
 }
-static inline bool __slub_debug_enabled(void)
-{
-	return false;
-}
-#ifdef CONFIG_SLUB
-static inline unsigned long get_each_object_track(struct kmem_cache *s,
-		struct page *page, enum track_item alloc,
-		int (*fn)(const struct kmem_cache *, const void *,
-		const struct track *, void *), void *private)
-{
-	return 0;
-}
-#endif
 #endif
 
 /*
@@ -272,10 +228,11 @@ static inline unsigned long get_each_object_track(struct kmem_cache *s,
  */
 static inline bool kmem_cache_debug_flags(struct kmem_cache *s, slab_flags_t flags)
 {
-	if (IS_ENABLED(CONFIG_SLUB_DEBUG))
-		VM_WARN_ON_ONCE(!(flags & SLAB_DEBUG_FLAGS));
-	if (__slub_debug_enabled())
+#ifdef CONFIG_SLUB_DEBUG
+	VM_WARN_ON_ONCE(!(flags & SLAB_DEBUG_FLAGS));
+	if (static_branch_unlikely(&slub_debug_enabled))
 		return s->flags & flags;
+#endif
 	return false;
 }
 
@@ -565,24 +522,15 @@ static inline struct kmem_cache *slab_pre_alloc_hook(struct kmem_cache *s,
 }
 
 static inline void slab_post_alloc_hook(struct kmem_cache *s,
-					struct obj_cgroup *objcg, gfp_t flags,
-					size_t size, void **p, bool init)
+					struct obj_cgroup *objcg,
+					gfp_t flags, size_t size, void **p)
 {
 	size_t i;
 
 	flags &= gfp_allowed_mask;
-
-	/*
-	 * As memory initialization might be integrated into KASAN,
-	 * kasan_slab_alloc and initialization memset must be
-	 * kept together to avoid discrepancies in behavior.
-	 *
-	 * As p[i] might get tagged, memset and kmemleak hook come after KASAN.
-	 */
 	for (i = 0; i < size; i++) {
-		p[i] = kasan_slab_alloc(s, p[i], flags, init);
-		if (p[i] && init && !kasan_has_integrated_init())
-			memset(p[i], 0, s->object_size);
+		p[i] = kasan_slab_alloc(s, p[i], flags);
+		/* As p[i] might get tagged, call kmemleak hook after KASAN. */
 		kmemleak_alloc_recursive(p[i], s->object_size, 1,
 					 s->flags, flags);
 	}
@@ -686,11 +634,5 @@ static inline bool slab_want_init_on_free(struct kmem_cache *c)
 			 (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON)));
 	return false;
 }
-
-#if defined(CONFIG_DEBUG_FS) && defined(CONFIG_SLUB_DEBUG)
-void debugfs_slab_release(struct kmem_cache *);
-#else
-static inline void debugfs_slab_release(struct kmem_cache *s) { }
-#endif
 
 #endif /* MM_SLAB_H */
